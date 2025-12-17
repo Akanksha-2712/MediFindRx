@@ -209,11 +209,11 @@ const CustomerHome = () => {
 
                 <form onSubmit={isBroadcastMode ? handleBroadcastSearch : handleSearch} className="relative max-w-2xl mx-auto mb-12">
                     <div className="relative">
-                        <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 h-6 w-6" />
+                        <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 h-5 w-5 sm:h-6 sm:w-6" />
                         <input
                             type="text"
-                            placeholder="Search for a drug (e.g., Amoxicillin)..."
-                            className="w-full pl-12 pr-12 py-4 rounded-2xl border-2 border-gray-100 shadow-lg focus:border-primary focus:ring-4 focus:ring-sky-100 outline-none transition-all text-lg"
+                            placeholder="Search for a drug..."
+                            className="w-full pl-12 pr-[120px] sm:pr-36 py-3 sm:py-4 rounded-2xl border-2 border-gray-100 shadow-lg focus:border-primary focus:ring-4 focus:ring-sky-100 outline-none transition-all text-base sm:text-lg"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
@@ -221,10 +221,10 @@ const CustomerHome = () => {
                         <button
                             type="button"
                             onClick={() => fileInputRef.current?.click()}
-                            className="absolute right-32 top-1/2 transform -translate-y-1/2 p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-500"
+                            className="absolute right-[85px] sm:right-32 top-1/2 transform -translate-y-1/2 p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-500"
                             title="Upload Prescription"
                         >
-                            <Camera className="h-6 w-6" />
+                            <Camera className="h-5 w-5" />
                         </button>
                         <input
                             type="file"
@@ -236,7 +236,7 @@ const CustomerHome = () => {
 
                         <button
                             type="submit"
-                            className="absolute right-2 top-2 bottom-2 bg-primary hover:bg-sky-600 text-white px-6 rounded-xl font-medium transition-colors"
+                            className="absolute right-2 top-2 bottom-2 bg-primary hover:bg-sky-600 text-white px-3 sm:px-6 rounded-xl font-medium transition-colors text-sm sm:text-base whitespace-nowrap"
                         >
                             {isBroadcastMode ? 'Broadcast' : 'Search'}
                         </button>
