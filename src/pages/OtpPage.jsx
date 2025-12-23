@@ -230,13 +230,7 @@ const OtpPage = () => {
                                 </div>
                             )}
 
-                            {/* Manual refresh button */}
-                            <button
-                                onClick={refreshStatus}
-                                className="w-full mt-4 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2 rounded-xl text-sm transition-colors"
-                            >
-                                🔄 Check if Verified
-                            </button>
+
 
                             {/* Direct link to rating page for when auto-redirect doesn't work */}
                             <p className="text-center text-xs text-gray-400 mt-4">

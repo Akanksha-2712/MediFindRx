@@ -40,15 +40,21 @@ export const DataProvider = ({ children }) => {
     }, []);
 
     const getPharmaciesWithDrug = (drugName) => {
+        if (!drugs.length || !inventory.length) return [];
+
         const drug = drugs.find(d => d.name.toLowerCase().includes(drugName.toLowerCase()));
         if (!drug) return [];
+
+        console.log(`Searching for pharmacies with: ${drug.name} (ID: ${drug.id})`);
 
         return inventory
             .filter(item => item.drug_id === drug.id && item.stock > 0)
             .map(item => {
                 const pharmacy = pharmacies.find(p => p.id === item.pharmacy_id);
-                return { ...pharmacy, stock: item.stock, drug, id: pharmacy.id }; // Ensure ID is passed
-            });
+                if (!pharmacy) return null;
+                return { ...pharmacy, stock: item.stock, drug, id: pharmacy.id };
+            })
+            .filter(Boolean);
     };
 
     const updateStock = async (pharmacyId, drugId, newStock) => {
@@ -259,7 +265,8 @@ export const DataProvider = ({ children }) => {
             confirmReservation,
             verifyOtp,
             ratePharmacy,
-            loading
+            loading,
+            user
         }}>
             {children}
         </DataContext.Provider>

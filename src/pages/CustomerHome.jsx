@@ -7,7 +7,7 @@ import HospitalListModal from '../components/HospitalListModal';
 
 
 const CustomerHome = () => {
-    const { getPharmaciesWithDrug, addReservation } = useData();
+    const { getPharmaciesWithDrug, user } = useData();
     const [searchTerm, setSearchTerm] = useState('');
     const [results, setResults] = useState([]);
     const [hasSearched, setHasSearched] = useState(false);
@@ -17,12 +17,56 @@ const CustomerHome = () => {
     const fileInputRef = React.useRef(null);
     const navigate = useNavigate();
 
-    const handleSearch = (e) => {
+    const calculateDistance = (lat1, lon1, lat2, lon2) => {
+        if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
+        const R = 6371;
+        const dLat = (lat2 - lat1) * (Math.PI / 180);
+        const dLon = (lon2 - lon1) * (Math.PI / 180);
+        const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
+    };
+
+    const handleSearch = async (e) => {
         e.preventDefault();
         if (!searchTerm.trim()) return;
-        const found = getPharmaciesWithDrug(searchTerm);
-        setResults(found);
-        setHasSearched(true);
+
+        const allPharmacies = getPharmaciesWithDrug(searchTerm);
+
+        const performSearch = (userLat = null, userLng = null) => {
+            let sortedResults = [...allPharmacies];
+
+            if (userLat && userLng) {
+                sortedResults = sortedResults.map(p => ({
+                    ...p,
+                    distance: calculateDistance(userLat, userLng, p.latitude, p.longitude)
+                })).sort((a, b) => a.distance - b.distance);
+            } else {
+                // Fallback to price sort if no location
+                sortedResults = sortedResults.sort((a, b) => a.drug.price - b.drug.price);
+            }
+
+            setResults(sortedResults.slice(0, 2));
+            setHasSearched(true);
+        };
+
+        if ("geolocation" in navigator) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    performSearch(position.coords.latitude, position.coords.longitude);
+                },
+                (error) => {
+                    console.warn("Location access denied, falling back to price sort.");
+                    performSearch();
+                },
+                { timeout: 5000 }
+            );
+        } else {
+            performSearch();
+        }
     };
 
     const handleFileSelect = (e) => {
@@ -34,70 +78,66 @@ const CustomerHome = () => {
     };
 
     const handleReserve = async (pharmacyId, drugId) => {
-        // Debugging Alert: Verify ID reception
+        // 1. SHOW THE ALERT IMMEDIATELY
         alert(`Starting Reservation... \nPharmacy ID: ${pharmacyId}\nDrug ID: ${drugId}`);
-        console.log(`Attempting DIRECT reserve: P=${pharmacyId} D=${drugId}`);
+        console.log(`Starting Reservation flow for P:${pharmacyId} D:${drugId}`);
 
         try {
-            // Get User directly
-            const { data: { user } } = await supabase.auth.getUser();
-            const customerName = user?.user_metadata?.name || 'Guest';
+            // 2. Prepare Data
+            const customerName = user?.user_metadata?.name || 'Guest User';
             const userId = user?.id || null;
-
             const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-            const payload = {
-                pharmacy_id: pharmacyId,
-                drug_id: drugId,
-                user_id: userId,
-                customer_name: customerName,
-                otp: otp,
-                status: 'pending'
-                // quantity: 1 // REMOVED: Causes error if column is missing
-            };
-
+            // 3. Insert into Database
             const { data, error } = await supabase
                 .from('reservations')
-                .insert([payload])
-                .select()
-                .single();
+                .insert([{
+                    pharmacy_id: pharmacyId,
+                    drug_id: drugId,
+                    user_id: userId,
+                    customer_name: customerName,
+                    otp: otp,
+                    status: 'pending',
+                    quantity: 1
+                }])
+                .select(); // Use select() without single() to be safer
 
             if (error) {
-                console.error("DB Error:", error);
-                alert("Reservation Error: " + error.message);
+                console.error("Supabase Insert Error:", error);
+                alert("Database Error: " + error.message);
                 return;
             }
 
-            if (!data) {
-                alert("Error: Insert succeeded but returned no data.");
+            if (!data || data.length === 0) {
+                console.error("No data returned from insert");
+                alert("Error: Reservation could not be created.");
                 return;
             }
 
-            // Upload prescription if selected
+            const reservation = data[0];
+            console.log("Reservation created:", reservation.id);
+
+            // 4. Handle Prescription Upload (Optional)
             if (prescriptionFile) {
+                console.log("Uploading prescription...");
                 const fileExt = prescriptionFile.name.split('.').pop();
-                const fileName = `reservation_${data.id}.${fileExt}`;
+                const fileName = `reservation_${reservation.id}.${fileExt}`;
                 const { error: uploadError } = await supabase.storage
                     .from('prescriptions')
                     .upload(fileName, prescriptionFile);
 
-                if (uploadError) {
-                    console.error("Upload Failed:", uploadError);
-                    // Don't alert blocking error, just log
-                }
+                if (uploadError) console.error("Upload Error:", uploadError);
             }
 
-            navigate(`/otp/${data.id}`);
+            // 5. REDIRECT
+            console.log("Redirecting to OTP page...");
+            navigate(`/otp/${reservation.id}`);
 
         } catch (err) {
-            console.error("Reserve Exception:", err);
+            console.error("Critical Exception in handleReserve:", err);
             alert("System Error: " + err.message);
         }
     };
-
-
-
-
 
     const handleSOS = async () => {
         if (!confirm("Are you sure you want to call for EMERGENCY help?")) return;
@@ -109,7 +149,7 @@ const CustomerHome = () => {
             const { error } = await supabase
                 .from('emergency_requests')
                 .insert([{
-                    customer_name: 'Guest User', // or from user context
+                    customer_name: user?.user_metadata?.name || 'Guest User',
                     latitude: location.lat,
                     longitude: location.lng,
                     status: 'pending'
@@ -135,14 +175,11 @@ const CustomerHome = () => {
             </button>
 
             <div className="max-w-4xl w-full bg-white/70 backdrop-blur-sm rounded-2xl shadow-xl p-8">
-                {/* ... existing content ... */}
                 <div className="text-center mb-12">
                     <h1 className="text-4xl font-bold text-gray-900 mb-2">
                         Find Your <span className="text-primary">Medicine</span> Instantly
                     </h1>
                     <p className="text-center text-gray-700 mb-8 italic">Medicine should not hide and seek</p>
-
-
                 </div>
 
                 <form onSubmit={handleSearch} className="relative max-w-2xl mx-auto mb-12">
@@ -155,7 +192,6 @@ const CustomerHome = () => {
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
-                        {/* Camera Button */}
                         <button
                             type="button"
                             onClick={() => fileInputRef.current?.click()}
@@ -179,7 +215,8 @@ const CustomerHome = () => {
                             Search
                         </button>
                     </div>
-                    {/* Quick Hospital Actions (Compact) */}
+
+                    {/* Quick Hospital Actions */}
                     <div className="grid grid-cols-3 gap-6 max-w-lg mx-auto mb-10 mt-12">
                         <button
                             type="button"
@@ -240,8 +277,10 @@ const CustomerHome = () => {
                                         <div>
                                             <h3 className="font-bold text-lg text-gray-900">{item.name}</h3>
                                             <div className="flex items-center text-gray-500 text-sm mt-1">
-                                                <MapPin className="h-4 w-4 mr-1" />
-                                                {item.address}
+                                                <MapPin className="h-4 w-4 mr-1 text-primary" />
+                                                {item.address} {item.distance !== undefined && item.distance !== Infinity && (
+                                                    <span className="ml-2 text-primary font-bold">({item.distance.toFixed(1)} km away)</span>
+                                                )}
                                             </div>
                                         </div>
                                         <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium">
@@ -256,12 +295,8 @@ const CustomerHome = () => {
                                         </div>
                                         <button
                                             type="button"
-                                            onClick={(e) => {
-                                                e.stopPropagation(); // Stop bubbling just in case
-                                                console.log("Button Clicked:", item.id, item.drug.id);
-                                                handleReserve(item.id, item.drug.id);
-                                            }}
-                                            className="w-full mt-2 flex items-center justify-center gap-2 bg-primary hover:bg-sky-600 text-white py-2 rounded-lg font-medium transition-colors relative z-10"
+                                            onClick={() => handleReserve(item.id, item.drug.id)}
+                                            className="w-full mt-2 bg-primary hover:bg-sky-600 text-white py-2 rounded-lg font-medium transition-colors"
                                         >
                                             {prescriptionFile ? 'Reserve with Prescription' : 'Reserve Medicine'}
                                         </button>
