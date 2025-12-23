@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { X, Bed, CalendarCheck, MapPin } from 'lucide-react';
+import { X, Bed, CalendarCheck, MapPin, Ambulance } from 'lucide-react';
 
 const HospitalListModal = ({ type, onClose }) => {
     const [hospitals, setHospitals] = useState([]);
@@ -35,47 +35,84 @@ const HospitalListModal = ({ type, onClose }) => {
 
         if (type === 'bed') {
             reserveBed(hospital);
-        } else {
+        } else if (type === 'appointment') {
             bookAppointment(hospital, user);
+        } else if (type === 'ambulance') {
+            bookAmbulance(hospital, user);
+        }
+    };
+
+    const bookAmbulance = async (hospital, user) => {
+        const confirm = window.confirm(`Request emergency ambulance from ${hospital.name}?`);
+        if (!confirm) return;
+
+        try {
+            const { error } = await supabase
+                .from('emergency_requests')
+                .insert([{
+                    user_id: user.id,
+                    hospital_id: hospital.id,
+                    customer_name: user.user_metadata.name || 'Emergency User',
+                    status: 'pending',
+                    latitude: 40.7128,
+                    longitude: -74.0060
+                }]);
+
+            if (error) throw error;
+            alert(`Ambulance service requested from ${hospital.name}!`);
+            onClose();
+        } catch (error) {
+            console.error("Ambulance request failed:", error);
+            alert("Failed to request ambulance.");
         }
     };
 
     const reserveBed = async (hospital) => {
-        // In a real app, this would create a 'bed_reservation' record.
-        // For this demo, we can just alert or update occupancy directly if allowed?
-        // Let's create a real 'reservations' record but with a special flag? 
-        // Or simpler: Just alert success for now as we don't have a 'hospital_reservations' table?
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            const customerName = user?.user_metadata?.name || 'Guest User';
+            const userId = user?.id || null;
 
-        // Actually, let's create a simple 'bed_requests' or similar if needed.
-        // For now, let's just simulate sending a request to the hospital.
-        const confirm = window.confirm(`Request a bed at ${hospital.name}?`);
-        if (confirm) {
-            alert(`Bed Request sent to ${hospital.name}! They will contact you shortly.`);
+            const { error } = await supabase
+                .from('bed_reservations')
+                .insert([{
+                    hospital_id: hospital.id,
+                    user_id: userId,
+                    customer_name: customerName,
+                    status: 'pending'
+                }]);
+
+            if (error) throw error;
+
+            alert(`Bed Request sent to ${hospital.name}! They will confirm your booking shortly.`);
             onClose();
+        } catch (error) {
+            console.error("Bed reservation failed:", error);
+            alert("Failed to request bed: " + error.message);
         }
     };
 
     const bookAppointment = async (hospital, user) => {
-        const time = prompt("Enter preferred time (e.g., Tomorrow 10 AM):");
-        if (!time) return;
+        const timePreference = prompt("Enter preferred time (e.g., Today at 5 PM):");
+        if (!timePreference) return;
 
         try {
             const { error } = await supabase
                 .from('hospital_appointments')
                 .insert([{
                     hospital_id: hospital.id,
-                    patient_name: user.user_metadata.name || 'Customer',
-                    scheduled_time: new Date().toISOString(), // Mock time for DB constraint, but store real preference in a note if possible? 
-                    // Wait, schema requires timestamp. Let's just set it to tomorrow random time for demo.
+                    user_id: user.id,
+                    patient_name: user?.user_metadata?.name || 'Customer',
+                    scheduled_time: new Date().toISOString(), // In a real app, use a proper date picker
                     status: 'scheduled'
                 }]);
 
             if (error) throw error;
-            alert(`Appointment booked at ${hospital.name} for ${time}!`);
+            alert(`Appointment booked at ${hospital.name} for ${timePreference}!`);
             onClose();
         } catch (error) {
             console.error("Booking failed:", error);
-            alert("Failed to book appointment.");
+            alert("Failed to book appointment: " + error.message);
         }
     };
 
@@ -86,8 +123,11 @@ const HospitalListModal = ({ type, onClose }) => {
                 {/* Header */}
                 <div className="flex items-center justify-between p-6 border-b border-gray-100">
                     <h2 className="text-xl font-bold flex items-center gap-2">
-                        {type === 'bed' ? <Bed className="h-6 w-6 text-green-600" /> : <CalendarCheck className="h-6 w-6 text-sky-600" />}
-                        {type === 'bed' ? 'Reserve a Bed' : 'Book Appointment'}
+                        {type === 'bed' ? <Bed className="h-6 w-6 text-green-600" /> :
+                            type === 'appointment' ? <CalendarCheck className="h-6 w-6 text-sky-600" /> :
+                                <Ambulance className="h-6 w-6 text-red-600" />}
+                        {type === 'bed' ? 'Reserve a Bed' :
+                            type === 'appointment' ? 'Book Appointment' : 'Request Ambulance'}
                     </h2>
                     <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
                         <X className="h-5 w-5 text-gray-500" />
@@ -127,11 +167,14 @@ const HospitalListModal = ({ type, onClose }) => {
                                             onClick={() => handleAction(hospital)}
                                             disabled={type === 'bed' && (hospital.beds_total - hospital.beds_occupied) <= 0}
                                             className={`text-sm font-medium px-4 py-2 rounded-lg transition-colors ${type === 'bed'
-                                                    ? 'bg-green-600 hover:bg-green-700 text-white disabled:bg-gray-300'
-                                                    : 'bg-sky-600 hover:bg-sky-700 text-white'
+                                                ? 'bg-green-600 hover:bg-green-700 text-white disabled:bg-gray-300'
+                                                : type === 'appointment'
+                                                    ? 'bg-sky-600 hover:bg-sky-700 text-white'
+                                                    : 'bg-red-600 hover:bg-red-700 text-white'
                                                 }`}
                                         >
-                                            {type === 'bed' ? 'Request Bed' : 'Book Now'}
+                                            {type === 'bed' ? 'Request Bed' :
+                                                type === 'appointment' ? 'Book Now' : 'Request Ambulance'}
                                         </button>
                                     </div>
                                 </div>

@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabaseClient';
-import { Hospital, Bed, CalendarCheck, Ambulance, X, AlertTriangle } from 'lucide-react';
+import { Hospital, Bed, CalendarCheck, Ambulance, X, AlertTriangle, CheckCircle } from 'lucide-react';
 
 const HospitalDashboard = () => {
     const { user } = useAuth();
     const [hospital, setHospital] = useState(null);
     const [appointments, setAppointments] = useState([]);
     const [emergencyRequests, setEmergencyRequests] = useState([]);
+    const [bedRequests, setBedRequests] = useState([]);
     const [newAppt, setNewAppt] = useState({ patient: '', time: '' });
     const [loading, setLoading] = useState(true);
 
@@ -65,15 +66,49 @@ const HospitalDashboard = () => {
                 if (apptError) throw apptError;
                 setAppointments(apptData || []);
 
-                // Get Emergency Requests (Global for now, or nearby)
-                // For demo, we show ALL pending requests to ALL hospitals
+                // Get Emergency Requests
                 const { data: emData, error: emError } = await supabase
                     .from('emergency_requests')
                     .select('*')
+                    .or(`hospital_id.eq.${hospitalData.id},hospital_id.is.null`)
                     .in('status', ['pending', 'dispatched'])
                     .order('created_at', { ascending: false });
 
                 if (!emError) setEmergencyRequests(emData || []);
+
+                // Get Bed Requests
+                const { data: bedData, error: bedError } = await supabase
+                    .from('bed_reservations')
+                    .select('*')
+                    .eq('hospital_id', hospitalData.id)
+                    .in('status', ['pending', 'accepted'])
+                    .order('created_at', { ascending: false });
+
+                if (!bedError) setBedRequests(bedData || []);
+
+                // Set up Real-time listener for ALL Hospital Updates
+                const hospitalSubscription = supabase
+                    .channel('hospital-updates')
+                    .on('postgres_changes', {
+                        event: '*', schema: 'public', table: 'bed_reservations',
+                        filter: `hospital_id=eq.${hospitalData.id}`
+                    }, () => fetchHospitalData())
+                    .on('postgres_changes', {
+                        event: '*', schema: 'public', table: 'emergency_requests'
+                    }, (payload) => {
+                        if (!payload.new.hospital_id || payload.new.hospital_id === hospitalData.id) {
+                            fetchHospitalData();
+                        }
+                    })
+                    .on('postgres_changes', {
+                        event: '*', schema: 'public', table: 'hospital_appointments',
+                        filter: `hospital_id=eq.${hospitalData.id}`
+                    }, () => fetchHospitalData())
+                    .subscribe();
+
+                return () => {
+                    supabase.removeChannel(hospitalSubscription);
+                };
             }
         } catch (error) {
             console.error('Error loading hospital data:', error);
@@ -164,6 +199,53 @@ const HospitalDashboard = () => {
             alert(`Emergency ${newStatus}!`);
         } catch (error) {
             console.error('Error updating emergency:', error);
+            alert('Action failed');
+        }
+    };
+
+    const handleBedRequest = async (id, newStatus) => {
+        try {
+            // If accepting, increment occupancy
+            if (newStatus === 'accepted') {
+                if (hospital.beds_occupied >= hospital.beds_total) {
+                    alert('No beds available to accept request');
+                    return;
+                }
+                const { error: updateError } = await supabase
+                    .from('hospitals')
+                    .update({ beds_occupied: hospital.beds_occupied + 1 })
+                    .eq('id', hospital.id);
+                if (updateError) throw updateError;
+                setHospital(prev => ({ ...prev, beds_occupied: prev.beds_occupied + 1 }));
+            }
+
+            // If resolving/completing an accepted request, decrement occupancy
+            if (newStatus === 'completed' || newStatus === 'rejected') {
+                const currentReq = bedRequests.find(r => r.id === id);
+                if (currentReq && currentReq.status === 'accepted') {
+                    await supabase
+                        .from('hospitals')
+                        .update({ beds_occupied: Math.max(0, hospital.beds_occupied - 1) })
+                        .eq('id', hospital.id);
+                    setHospital(prev => ({ ...prev, beds_occupied: Math.max(0, prev.beds_occupied - 1) }));
+                }
+            }
+
+            const { error } = await supabase
+                .from('bed_reservations')
+                .update({ status: newStatus })
+                .eq('id', id);
+
+            if (error) throw error;
+
+            // Refresh bed requests
+            setBedRequests(prev => prev.map(req =>
+                req.id === id ? { ...req, status: newStatus } : req
+            ).filter(req => !['rejected', 'completed'].includes(newStatus)));
+
+            alert(`Bed Request ${newStatus}!`);
+        } catch (error) {
+            console.error('Error updating bed request:', error);
             alert('Action failed');
         }
     };
@@ -274,6 +356,56 @@ const HospitalDashboard = () => {
                         </div>
                     </div>
                 </div>
+
+                {/* Bed Requests List */}
+                <div className="mt-8 pt-8 border-t border-gray-100">
+                    <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center">
+                        <CheckCircle className="h-5 w-5 mr-2 text-green-600" /> Bed Requests
+                    </h3>
+                    <div className="space-y-4">
+                        {bedRequests.length === 0 ? (
+                            <p className="text-gray-500 text-sm">No active bed requests.</p>
+                        ) : (
+                            bedRequests.map(req => (
+                                <div key={req.id} className="flex justify-between items-center bg-gray-50 p-4 rounded-xl border border-gray-100">
+                                    <div>
+                                        <p className="font-bold text-gray-900">{req.customer_name}</p>
+                                        <p className="text-xs text-gray-500">Requested on {new Date(req.created_at).toLocaleDateString()}</p>
+                                        <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full mt-1 inline-block ${req.status === 'accepted' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                                            }`}>
+                                            {req.status}
+                                        </span>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        {req.status === 'pending' ? (
+                                            <>
+                                                <button
+                                                    onClick={() => handleBedRequest(req.id, 'accepted')}
+                                                    className="bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-2 px-4 rounded-lg shadow-sm"
+                                                >
+                                                    ACCEPT
+                                                </button>
+                                                <button
+                                                    onClick={() => handleBedRequest(req.id, 'rejected')}
+                                                    className="bg-red-100 hover:bg-red-200 text-red-700 text-xs font-bold py-2 px-4 rounded-lg"
+                                                >
+                                                    REJECT
+                                                </button>
+                                            </>
+                                        ) : (
+                                            <button
+                                                onClick={() => handleBedRequest(req.id, 'completed')}
+                                                className="bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs font-bold py-2 px-4 rounded-lg"
+                                            >
+                                                DISCHARGE
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
             </section>
 
             {/* Appointments */}
@@ -342,9 +474,8 @@ const HospitalDashboard = () => {
                                 <div>
                                     <h3 className="font-bold text-gray-800 text-lg">{req.customer_name || 'Unknown User'}</h3>
                                     <p className="text-sm text-gray-600">Location: {req.latitude?.toFixed(4)}, {req.longitude?.toFixed(4)}</p>
-                                    <span className={`inline-block mt-1 text-xs px-2 py-0.5 rounded-full uppercase font-bold ${
-                                        req.status === 'dispatched' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-200 text-red-800'
-                                    }`}>
+                                    <span className={`inline-block mt-1 text-xs px-2 py-0.5 rounded-full uppercase font-bold ${req.status === 'dispatched' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-200 text-red-800'
+                                        }`}>
                                         {req.status}
                                     </span>
                                 </div>

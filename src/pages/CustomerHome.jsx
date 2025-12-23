@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useData } from '../context/DataContext';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
@@ -14,8 +14,86 @@ const CustomerHome = () => {
     const [prescriptionFile, setPrescriptionFile] = useState(null);
     const [prescriptionPreview, setPrescriptionPreview] = useState(null);
     const [showHospitalList, setShowHospitalList] = useState(null); // 'appointment' | 'bed' | null
+    const [notifications, setNotifications] = useState([]);
+    const [showNotifications, setShowNotifications] = useState(false);
     const fileInputRef = React.useRef(null);
     const navigate = useNavigate();
+
+    // Listen for customer-specific notifications
+    useEffect(() => {
+        if (!user?.id) return;
+
+        const setupSubscriptions = async () => {
+            // 1. Bed Reservations
+            const bedChannel = supabase
+                .channel('customer-bed-updates')
+                .on('postgres_changes', {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'bed_reservations',
+                    filter: `user_id=eq.${user.id}`
+                }, async (payload) => {
+                    const { data: hospital } = await supabase.from('hospitals').select('name').eq('id', payload.new.hospital_id).single();
+                    addNotification(`Bed Request ${payload.new.status.toUpperCase()}`, `Your request at ${hospital?.name || 'Hospital'} has been ${payload.new.status}.`);
+                })
+                .subscribe();
+
+            // 2. Appointments
+            const apptChannel = supabase
+                .channel('customer-appt-updates')
+                .on('postgres_changes', {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'hospital_appointments',
+                    filter: `user_id=eq.${user.id}`
+                }, async (payload) => {
+                    const { data: hospital } = await supabase.from('hospitals').select('name').eq('id', payload.new.hospital_id).single();
+                    addNotification(`Appointment ${payload.new.status.toUpperCase()}`, `Your appointment at ${hospital?.name || 'Hospital'} for ${new Date(payload.new.scheduled_time).toLocaleString()} is now ${payload.new.status}.`);
+                })
+                .subscribe();
+
+            // 3. Ambulance / SOS
+            const sosChannel = supabase
+                .channel('customer-sos-updates')
+                .on('postgres_changes', {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'emergency_requests',
+                    filter: `user_id=eq.${user.id}`
+                }, async (payload) => {
+                    const { data: hospital } = await supabase.from('hospitals').select('name').eq('id', payload.new.hospital_id).single();
+                    const msg = payload.new.status === 'dispatched' ? `AMBULANCE DISPATCHED! from ${hospital?.name || 'Hospital'}` : `Emergency request ${payload.new.status}.`;
+                    addNotification(`Emergency Update`, msg);
+                })
+                .subscribe();
+
+            return () => {
+                supabase.removeChannel(bedChannel);
+                supabase.removeChannel(apptChannel);
+                supabase.removeChannel(sosChannel);
+            };
+        };
+
+        setupSubscriptions();
+    }, [user?.id]);
+
+    const addNotification = (title, message) => {
+        const newNotif = {
+            id: Date.now(),
+            title,
+            message,
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            read: false
+        };
+        setNotifications(prev => [newNotif, ...prev]);
+
+        // Browsre notification as well
+        if (Notification.permission === "granted") {
+            new Notification(title, { body: message });
+        } else if (Notification.permission !== "denied") {
+            Notification.requestPermission();
+        }
+    };
 
     const calculateDistance = (lat1, lon1, lat2, lon2) => {
         if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
@@ -168,11 +246,59 @@ const CustomerHome = () => {
             {/* SOS Button */}
             <button
                 onClick={handleSOS}
-                className="fixed bottom-6 right-6 bg-red-600 hover:bg-red-700 text-white w-16 h-16 rounded-full shadow-lg shadow-red-300 flex items-center justify-center animate-pulse z-50 border-4 border-red-200"
+                className="fixed bottom-6 right-24 bg-red-600 hover:bg-red-700 text-white w-16 h-16 rounded-full shadow-lg shadow-red-300 flex items-center justify-center animate-pulse z-50 border-4 border-red-200"
                 title="EMERGENCY SOS"
             >
-                <div className="font-bold text-xs">SOS</div>
+                <div className="font-bold text-xs uppercase tracking-tighter">SOS</div>
             </button>
+
+            {/* Notification Bell */}
+            <div className="fixed bottom-6 right-6 z-50">
+                <button
+                    onClick={() => setShowNotifications(!showNotifications)}
+                    className="bg-white hover:bg-gray-50 text-gray-700 w-14 h-14 rounded-full shadow-xl flex items-center justify-center border-2 border-primary relative group transition-all"
+                >
+                    <Bell className={`h-7 w-7 ${notifications.some(n => !n.read) ? 'animate-bounce text-primary' : 'text-gray-400'}`} />
+                    {notifications.some(n => !n.read) && (
+                        <span className="absolute top-0 right-0 h-4 w-4 bg-red-500 rounded-full border-2 border-white flex items-center justify-center text-[10px] text-white font-bold">
+                            {notifications.filter(n => !n.read).length}
+                        </span>
+                    )}
+                </button>
+
+                {/* Notifications Panel */}
+                {showNotifications && (
+                    <div className="absolute bottom-16 right-0 w-80 max-h-[400px] bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden animate-in slide-in-from-bottom-4 duration-200 flex flex-col">
+                        <div className="p-4 border-b border-gray-50 bg-gray-50 flex justify-between items-center">
+                            <h3 className="font-bold text-gray-800">Notifications</h3>
+                            <button
+                                onClick={() => setNotifications(notifications.map(n => ({ ...n, read: true })))}
+                                className="text-xs text-primary hover:underline"
+                            >
+                                Mark all as read
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto">
+                            {notifications.length === 0 ? (
+                                <div className="p-8 text-center text-gray-400">
+                                    <Bell className="h-8 w-8 mx-auto mb-2 opacity-20" />
+                                    <p className="text-sm">No new notifications</p>
+                                </div>
+                            ) : (
+                                notifications.map(notif => (
+                                    <div key={notif.id} className={`p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors ${!notif.read ? 'bg-blue-50/30' : ''}`}>
+                                        <div className="flex justify-between items-start mb-1">
+                                            <span className="font-bold text-sm text-gray-900">{notif.title}</span>
+                                            <span className="text-[10px] text-gray-400 uppercase font-medium">{notif.time}</span>
+                                        </div>
+                                        <p className="text-xs text-gray-600 leading-relaxed">{notif.message}</p>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                )}
+            </div>
 
             <div className="max-w-4xl w-full bg-white/70 backdrop-blur-sm rounded-2xl shadow-xl p-8">
                 <div className="text-center mb-12">
@@ -236,11 +362,11 @@ const CustomerHome = () => {
                         </button>
                         <button
                             type="button"
-                            onClick={handleSOS}
+                            onClick={() => setShowHospitalList('ambulance')}
                             className="bg-red-50 hover:bg-red-100 p-4 rounded-xl border border-red-100 transition-all flex flex-col items-center gap-2 group shadow-sm"
                         >
                             <Ambulance className="h-6 w-6 text-red-600 animate-pulse" />
-                            <span className="font-semibold text-gray-700 text-xs text-center">SOS Feed</span>
+                            <span className="font-semibold text-gray-700 text-xs text-center">Request Ambulance</span>
                         </button>
                     </div>
 
