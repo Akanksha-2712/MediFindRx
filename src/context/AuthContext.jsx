@@ -13,30 +13,26 @@ export const AuthProvider = ({ children }) => {
     useEffect(() => {
         let mounted = true;
 
-        // Safety timeout in case Supabase hangs (e.g. invalid key)
+        // Safety timeout in case Supabase hangs (e.g. invalid key or cookie block)
         const timeoutId = setTimeout(() => {
             if (mounted && loading) {
-                console.error("Supabase connection timeout");
-                setAuthError("Connection timed out. Please check your internet connection.");
+                console.error("Supabase connection timeout - possibly blocked by browser extensions or cache.");
+                setAuthError("Loading is taking longer than expected. Stale browser data might be causing a hang.");
                 setLoading(false);
             }
-        }, 300000); // Increased to 5 minutes for slow connections
+        }, 10000); // reduced to 10 seconds for better responsiveness
 
         // Check active session
         const getSession = async () => {
-            console.log("AuthContext: getSession started");
             try {
                 const { data: { session }, error } = await supabase.auth.getSession();
-                console.log("AuthContext: getSession result", { session, error });
                 if (error) throw error;
 
                 if (mounted) {
-                    setAuthError(null); // Clear any timeout errors if request succeeded
+                    setAuthError(null);
                     if (session) {
-                        console.log("AuthContext: Fetching profile...");
                         await fetchProfile(session.user.id, session.user.email);
                     } else {
-                        console.log("AuthContext: No session, stopping loading");
                         setLoading(false);
                     }
                 }
@@ -88,13 +84,19 @@ export const AuthProvider = ({ children }) => {
                         .single();
                     if (pharmacyData) pharmacyId = pharmacyData.id;
                 }
-                setUser({ ...data, email, pharmacyId }); // Combine auth data and profile data
+                setUser({ ...data, email, pharmacyId });
             }
         } catch (err) {
             console.error('Unexpected error:', err);
         } finally {
             setLoading(false);
         }
+    };
+
+    const handleHardReset = () => {
+        localStorage.clear();
+        sessionStorage.clear();
+        window.location.reload();
     };
 
     const login = async (email, password) => {
@@ -125,7 +127,6 @@ export const AuthProvider = ({ children }) => {
             setAuthError(null);
             return data;
         } catch (e) {
-            // Ensure any unexpected errors also surface
             setAuthError(e.message || 'Registration failed');
             throw e;
         }
@@ -139,20 +140,35 @@ export const AuthProvider = ({ children }) => {
     return (
         <AuthContext.Provider value={{ user, login, logout, register, loading, authError }}>
             {loading ? (
-                <div className="min-h-screen flex items-center justify-center bg-gray-50">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+                <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mb-4"></div>
+                    <p className="text-gray-500 animate-pulse text-sm">Authenticating Securely...</p>
                 </div>
             ) : authError && !user ? (
                 <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-                    <div className="bg-white p-8 rounded-xl shadow-xl max-w-md w-full border-l-4 border-red-500">
-                        <h2 className="text-xl font-bold text-red-600 mb-2">Initialization Error</h2>
-                        <p className="text-gray-600">{authError}</p>
-                        <button
-                            onClick={() => window.location.reload()}
-                            className="mt-4 bg-gray-100 hover:bg-gray-200 text-gray-800 px-4 py-2 rounded transition-colors"
-                        >
-                            Retry
-                        </button>
+                    <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border-t-8 border-red-500 text-center">
+                        <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                        </div>
+                        <h2 className="text-2xl font-bold text-gray-900 mb-2">Sync Issue Detected</h2>
+                        <p className="text-gray-600 text-sm mb-6">
+                            Chrome's cache sometimes blocks the login system. Click the button below to clear the stash and fix the connection.
+                        </p>
+
+                        <div className="space-y-3">
+                            <button
+                                onClick={handleHardReset}
+                                className="w-full bg-primary hover:bg-sky-600 text-white font-bold py-3 px-4 rounded-xl shadow-lg shadow-sky-100 transition-all flex items-center justify-center gap-2"
+                            >
+                                ⚡ Reset & Fix App
+                            </button>
+                            <button
+                                onClick={() => window.location.reload()}
+                                className="w-full bg-gray-50 hover:bg-gray-100 text-gray-600 font-medium py-3 px-4 rounded-xl transition-all"
+                            >
+                                Simple Reload
+                            </button>
+                        </div>
                     </div>
                 </div>
             ) : (
