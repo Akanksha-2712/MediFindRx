@@ -1,4 +1,3 @@
-
 -- Consolidated Script to Setup Broadcast and Location Features
 -- Run this script in the Supabase SQL Editor to fix missing table errors
 

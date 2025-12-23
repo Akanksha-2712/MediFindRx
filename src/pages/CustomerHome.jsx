@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useData } from '../context/DataContext';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { Search, MapPin, Navigation, Camera, Radio, Bell, CheckCircle, XCircle, CalendarCheck, Bed, Ambulance } from 'lucide-react';
+import { Search, MapPin, Navigation, Camera, Bell, CheckCircle, XCircle, CalendarCheck, Bed, Ambulance } from 'lucide-react';
 import HospitalListModal from '../components/HospitalListModal';
 
 
@@ -95,71 +95,9 @@ const CustomerHome = () => {
         }
     };
 
-    const [isBroadcastMode, setIsBroadcastMode] = useState(false);
-    const [broadcastRequest, setBroadcastRequest] = useState(null);
-    const [broadcastResponses, setBroadcastResponses] = useState([]);
 
-    const handleBroadcastSearch = async (e) => {
-        e.preventDefault();
-        if (!searchTerm.trim()) return;
 
-        // Get Location
-        if (!navigator.geolocation) {
-            alert("Geolocation is required for broadcast search.");
-            return;
-        }
 
-        navigator.geolocation.getCurrentPosition(async (position) => {
-            const { latitude, longitude } = position.coords;
-            const { data: { user } } = await supabase.auth.getUser();
-
-            if (!user) {
-                alert("Please login to use Broadcast Search");
-                navigate('/login');
-                return;
-            }
-
-            // 1. Create Request
-            const { data: request, error } = await supabase
-                .from('medicine_requests')
-                .insert([{
-                    user_id: user.id,
-                    customer_name: user.user_metadata.name || 'Customer',
-                    drug_name: searchTerm,
-                    latitude,
-                    longitude,
-                    status: 'pending'
-                }])
-                .select()
-                .single();
-
-            if (error) {
-                console.error("Broadcast failed:", error);
-                alert("Failed to broadcast request.");
-                return;
-            }
-
-            setBroadcastRequest(request);
-            setBroadcastResponses([]); // Clear old
-
-            // 2. Subscribe to Responses
-            const channel = supabase
-                .channel(`request-${request.id}`)
-                .on(
-                    'postgres_changes',
-                    { event: 'INSERT', schema: 'public', table: 'pharmacy_responses', filter: `request_id=eq.${request.id}` },
-                    (payload) => {
-                        console.log("New Response!", payload);
-                        setBroadcastResponses(prev => [...prev, payload.new]);
-                    }
-                )
-                .subscribe();
-
-            // Cleanup subscription on unmount or new search (simplified for now)
-        }, (err) => {
-            alert("Error getting location: " + err.message);
-        });
-    };
 
     const handleSOS = async () => {
         if (!confirm("Are you sure you want to call for EMERGENCY help?")) return;
@@ -207,7 +145,7 @@ const CustomerHome = () => {
 
                 </div>
 
-                <form onSubmit={isBroadcastMode ? handleBroadcastSearch : handleSearch} className="relative max-w-2xl mx-auto mb-12">
+                <form onSubmit={handleSearch} className="relative max-w-2xl mx-auto mb-12">
                     <div className="relative">
                         <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 h-5 w-5 sm:h-6 sm:w-6" />
                         <input
@@ -238,53 +176,34 @@ const CustomerHome = () => {
                             type="submit"
                             className="absolute right-2 top-2 bottom-2 bg-primary hover:bg-sky-600 text-white px-3 sm:px-6 rounded-xl font-medium transition-colors text-sm sm:text-base whitespace-nowrap"
                         >
-                            {isBroadcastMode ? 'Broadcast' : 'Search'}
+                            Search
                         </button>
                     </div>
-
-                    {/* Mode Toggle */}
-                    <div className="flex justify-center gap-4 mb-8">
-                        <button
-                            type="button"
-                            onClick={() => { setIsBroadcastMode(false); setHasSearched(false); }}
-                            className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${!isBroadcastMode ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-                        >
-                            Standard Search
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => { setIsBroadcastMode(true); setHasSearched(false); }}
-                            className={`px-4 py-2 rounded-full text-sm font-medium transition-colors flex items-center gap-2 ${isBroadcastMode ? 'bg-orange-500 text-white shadow-lg shadow-orange-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-                        >
-                            <Radio className="h-4 w-4" /> Broadcast to Nearby
-                        </button>
-                    </div>
-
                     {/* Quick Hospital Actions (Compact) */}
-                    <div className="grid grid-cols-3 gap-3 max-w-lg mx-auto mb-8">
+                    <div className="grid grid-cols-3 gap-6 max-w-lg mx-auto mb-10 mt-12">
                         <button
                             type="button"
                             onClick={() => setShowHospitalList('appointment')}
-                            className="bg-sky-50 hover:bg-sky-100 p-3 rounded-lg border border-sky-100 transition-all flex flex-col items-center gap-1 group"
+                            className="bg-sky-50 hover:bg-sky-100 p-4 rounded-xl border border-sky-100 transition-all flex flex-col items-center gap-2 group shadow-sm"
                         >
-                            <CalendarCheck className="h-5 w-5 text-primary group-hover:scale-110 transition-transform" />
-                            <span className="font-semibold text-gray-700 text-xs">Appointment</span>
+                            <CalendarCheck className="h-6 w-6 text-primary group-hover:scale-110 transition-transform" />
+                            <span className="font-semibold text-gray-700 text-xs text-center">Appointment</span>
                         </button>
                         <button
                             type="button"
                             onClick={() => setShowHospitalList('bed')}
-                            className="bg-green-50 hover:bg-green-100 p-3 rounded-lg border border-green-100 transition-all flex flex-col items-center gap-1 group"
+                            className="bg-green-50 hover:bg-green-100 p-4 rounded-xl border border-green-100 transition-all flex flex-col items-center gap-2 group shadow-sm"
                         >
-                            <Bed className="h-5 w-5 text-green-600 group-hover:scale-110 transition-transform" />
-                            <span className="font-semibold text-gray-700 text-xs">Reserve Bed</span>
+                            <Bed className="h-6 w-6 text-green-600 group-hover:scale-110 transition-transform" />
+                            <span className="font-semibold text-gray-700 text-xs text-center">Reserve Bed</span>
                         </button>
                         <button
                             type="button"
                             onClick={handleSOS}
-                            className="bg-red-50 hover:bg-red-100 p-3 rounded-lg border border-red-100 transition-all flex flex-col items-center gap-1 group"
+                            className="bg-red-50 hover:bg-red-100 p-4 rounded-xl border border-red-100 transition-all flex flex-col items-center gap-2 group shadow-sm"
                         >
-                            <Ambulance className="h-5 w-5 text-red-600 animate-pulse" />
-                            <span className="font-semibold text-gray-700 text-xs">SOS</span>
+                            <Ambulance className="h-6 w-6 text-red-600 animate-pulse" />
+                            <span className="font-semibold text-gray-700 text-xs text-center">SOS Feed</span>
                         </button>
                     </div>
 
@@ -306,52 +225,7 @@ const CustomerHome = () => {
                     )}
                 </form>
 
-                {/* Broadcast Results UI */}
-                {isBroadcastMode && broadcastRequest && (
-                    <div className="mt-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                        <div className="text-center mb-8">
-                            <div className="inline-block p-4 bg-orange-50 rounded-full mb-3 animate-pulse">
-                                <Radio className="h-8 w-8 text-orange-500" />
-                            </div>
-                            <h2 className="text-xl font-bold text-gray-900">Broadcasting Request...</h2>
-                            <p className="text-gray-500">Asking nearby pharmacies for "{broadcastRequest.drug_name}"</p>
-                        </div>
-
-                        <div className="space-y-4">
-                            {broadcastResponses.length === 0 ? (
-                                <p className="text-center text-gray-400 italic">Waiting for responses...</p>
-                            ) : (
-                                broadcastResponses.map((resp) => (
-                                    <div key={resp.id} className="bg-white border-l-4 border-green-500 rounded-lg p-4 shadow-sm flex justify-between items-center">
-                                        <div>
-                                            <h3 className="font-bold text-gray-900">{resp.pharmacy_name}</h3>
-                                            <p className="text-sm text-gray-600">{resp.message || 'Product is available.'}</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-lg font-bold text-green-600">₹{resp.price}</p>
-                                            <div className="flex gap-2 justify-end mt-1">
-                                                <button
-                                                    className="bg-green-600 hover:bg-green-700 text-white px-4 py-1 rounded-md text-sm transition-colors w-full"
-                                                    onClick={() => {
-                                                        if (resp.drug_id) {
-                                                            handleReserve(resp.pharmacy_id, resp.drug_id);
-                                                        } else {
-                                                            alert(`Please visit ${resp.pharmacy_name} directly to purchase (Item ID not linked).`);
-                                                        }
-                                                    }}
-                                                >
-                                                    Reserve Medicine
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))
-                            )}
-                        </div>
-                    </div>
-                )}
-
-                {!isBroadcastMode && hasSearched && (
+                {hasSearched && (
                     <div className="space-y-6">
                         <h2 className="text-xl font-semibold text-gray-800 mb-4">
                             {results.length > 0

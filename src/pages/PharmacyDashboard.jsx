@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
 import { supabase } from '../supabaseClient';
-import { Package, Edit2, Save, X, ClipboardList, CheckCircle, Clock, AlertTriangle, Radio, Send, Check } from 'lucide-react';
+import { Package, Edit2, Save, X, ClipboardList, CheckCircle, Clock, AlertTriangle, Send, Check } from 'lucide-react';
 
 const PharmacyDashboard = () => {
     const { user } = useAuth();
@@ -13,9 +13,7 @@ const PharmacyDashboard = () => {
     const [editValue, setEditValue] = useState('');
     const [otpInput, setOtpInput] = useState({});
 
-    // Broadcast Feature State
-    const [liveRequests, setLiveRequests] = useState([]);
-    const [responsePrice, setResponsePrice] = useState({});
+
 
     // Get current pharmacy details
     const myPharmacy = pharmacies ? pharmacies.find(p => p.owner_id === user?.id) : null;
@@ -72,104 +70,7 @@ const PharmacyDashboard = () => {
         };
     }, [user?.pharmacyId]);
 
-    // Broadcast Feature Listener
-    useEffect(() => {
-        if (!user?.pharmacyId || !myPharmacy?.latitude || !myPharmacy?.longitude) return;
 
-        console.log("Subscribing to medicine requests...");
-        const channel = supabase
-            .channel('public:medicine_requests')
-            .on(
-                'postgres_changes',
-                { event: 'INSERT', schema: 'public', table: 'medicine_requests' },
-                (payload) => {
-                    console.log("New Medicine Request!", payload);
-                    if (payload.new.status === 'pending') {
-                        // Check distance (Haversine Formula)
-                        const R = 6371; // Radius of Earth in km
-                        const dLat = (payload.new.latitude - myPharmacy.latitude) * Math.PI / 180;
-                        const dLon = (payload.new.longitude - myPharmacy.longitude) * Math.PI / 180;
-                        const a =
-                            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                            Math.cos(myPharmacy.latitude * Math.PI / 180) * Math.cos(payload.new.latitude * Math.PI / 180) *
-                            Math.sin(dLon / 2) * Math.sin(dLon / 2);
-                        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-                        const distance = R * c;
-
-                        console.log(`Request from ${distance.toFixed(2)} km away.`);
-
-                        // "Nearby" definition expanded to 20km to ensure coverage
-                        if (distance <= 20) {
-                            // Add distance to the request object for display
-                            const requestWithDistance = { ...payload.new, distance: distance };
-                            setLiveRequests(prev => [requestWithDistance, ...prev]);
-
-                            // Optional: Play sound or notify
-                            const audio = new Audio('/notification.mp3');
-                            audio.play().catch(e => console.log("Audio play failed", e));
-                        } else {
-                            console.log("Ignoring request: Too far away.");
-                        }
-                    }
-                }
-            )
-            .subscribe();
-
-        return () => {
-            supabase.removeChannel(channel);
-        };
-    }, [user?.pharmacyId, myPharmacy]);
-
-    // Handle Broadcast Response
-    const handleBroadcastResponse = async (request, status) => {
-        if (status === 'available' && !responsePrice[request.id]) {
-            alert("Please enter a price.");
-            return;
-        }
-
-        // Find matches in inventory to link drug_id
-        let matchedDrugId = null;
-        const myInventory = drugs.map(drug => {
-            const stockItem = inventory.find(i => i.pharmacy_id === user.pharmacyId && i.drug_id === drug.id);
-            return { ...drug, stock: stockItem ? stockItem.stock : 0 };
-        });
-
-        if (status === 'available') {
-            const match = myInventory.find(d =>
-                d.name.toLowerCase().includes(request.drug_name.toLowerCase()) && d.stock > 0
-            );
-            if (match) {
-                matchedDrugId = match.id;
-            } else {
-                console.warn("Could not auto-match inventory item for", request.drug_name);
-                // Try fuzzy match ignoring stock
-                const anyMatch = myInventory.find(d => d.name.toLowerCase().includes(request.drug_name.toLowerCase()));
-                if (anyMatch) matchedDrugId = anyMatch.id;
-            }
-        }
-
-        const { error } = await supabase
-            .from('pharmacy_responses')
-            .insert([{
-                request_id: request.id,
-                pharmacy_id: user.pharmacyId,
-                pharmacy_name: myPharmacy?.name || 'Pharmacy',
-                pharmacy_lat: myPharmacy?.latitude,
-                pharmacy_lng: myPharmacy?.longitude,
-                drug_id: matchedDrugId,
-                status: status,
-                price: status === 'available' ? parseFloat(responsePrice[request.id]) : null,
-                message: status === 'available' ? 'We have this in stock.' : 'Not available.'
-            }]);
-
-        if (!error) {
-            setLiveRequests(prev => prev.filter(r => r.id !== request.id));
-            alert("Response sent!");
-        } else {
-            console.error(error);
-            alert("Error sending response.");
-        }
-    };
 
     // Inventory Helpers
     const handleEdit = (drugId, currentStock) => {
@@ -196,37 +97,7 @@ const PharmacyDashboard = () => {
 
     // --- RENDER GUARDS ---
 
-    // Check for Missing Location (Critical for Broadcast)
-    if (myPharmacy && (!myPharmacy.latitude || !myPharmacy.longitude)) {
-        return (
-            <div className="max-w-6xl mx-auto px-4 py-8 text-center">
-                <div className="bg-red-50 p-8 rounded-2xl border border-red-200 inline-block">
-                    <h1 className="text-2xl font-bold text-red-700 mb-2">Location Required</h1>
-                    <p className="text-red-600">Your pharmacy location (Latitude/Longitude) is missing.</p>
-                    <p className="text-gray-600 mt-2">The "Broadcast" feature cannot work without your location.</p>
 
-                    <button
-                        onClick={() => {
-                            if (!navigator.geolocation) return alert("Geolocation not supported");
-                            navigator.geolocation.getCurrentPosition(async (pos) => {
-                                const { latitude, longitude } = pos.coords;
-                                const { error } = await supabase
-                                    .from('pharmacies')
-                                    .update({ latitude, longitude })
-                                    .eq('id', user.pharmacyId);
-
-                                if (error) alert("Error saving location: " + error.message);
-                                else window.location.reload();
-                            }, (err) => alert("Could not get location: " + err.message));
-                        }}
-                        className="mt-6 bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-lg font-bold shadow-lg shadow-red-200 transition-colors"
-                    >
-                        📍 Auto-Detect & Save Location
-                    </button>
-                </div>
-            </div>
-        );
-    }
 
     if (myPharmacy && myPharmacy.approved === false) {
         return (
@@ -294,18 +165,7 @@ const PharmacyDashboard = () => {
                             </span>
                         )}
                     </button>
-                    <button
-                        onClick={() => setActiveTab('requests')}
-                        className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors ${activeTab === 'requests' ? 'bg-orange-100 text-orange-700' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                    >
-                        <Radio className={`h-5 w-5 ${liveRequests.length > 0 ? 'animate-pulse text-orange-600' : ''}`} />
-                        Requests
-                        {liveRequests.length > 0 && (
-                            <span className="bg-red-600 text-white text-xs px-2 py-0.5 rounded-full animate-bounce">
-                                {liveRequests.length}
-                            </span>
-                        )}
-                    </button>
+
                 </div>
             </div>
 
@@ -373,69 +233,7 @@ const PharmacyDashboard = () => {
                         </table>
                     </div>
                 </div>
-            ) : activeTab === 'requests' ? (
-                <div className="space-y-6">
-                    <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-                        <Radio className="h-6 w-6 text-orange-500" /> Live Customer Requests
-                    </h2>
-                    {liveRequests.length === 0 ? (
-                        <div className="bg-white p-12 rounded-xl text-center text-gray-500 border border-gray-200">
-                            <p>No active requests right now.</p>
-                            <p className="text-sm">They will appear here instantly when customers search nearby.</p>
-                        </div>
-                    ) : (
-                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                            {liveRequests.map(req => (
-                                <div key={req.id} className="bg-white p-6 rounded-xl shadow-md border-l-4 border-orange-500 animate-in slide-in-from-left duration-300">
-                                    <div className="flex justify-between items-start mb-4">
-                                        <div>
-                                            <h3 className="font-bold text-lg text-gray-900">{req.drug_name}</h3>
-                                            <div className="flex items-center gap-2 mt-1">
-                                                <span className="text-xs time bg-gray-100 px-2 py-1 rounded flex items-center gap-1">
-                                                    <Clock className="h-3 w-3" />
-                                                    {new Date(req.created_at).toLocaleTimeString()}
-                                                </span>
-                                                {req.distance && (
-                                                    <span className={`text-xs px-2 py-1 rounded font-bold ${req.distance < 5 ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                                                        {req.distance.toFixed(1)} km away
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <p className="text-sm text-gray-600 mb-4">Requested by: <span className="font-medium">{req.customer_name}</span></p>
 
-                                    <div className="space-y-3">
-                                        <div>
-                                            <label className="block text-xs font-medium text-gray-700 mb-1">Your Price (₹)</label>
-                                            <input
-                                                type="number"
-                                                placeholder="0.00"
-                                                className="w-full border rounded px-3 py-2 text-sm"
-                                                value={responsePrice[req.id] || ''}
-                                                onChange={(e) => setResponsePrice(prev => ({ ...prev, [req.id]: e.target.value }))}
-                                            />
-                                        </div>
-                                        <div className="flex gap-2">
-                                            <button
-                                                onClick={() => handleBroadcastResponse(req, 'available')}
-                                                className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg font-medium text-sm transition-colors flex justify-center items-center gap-1"
-                                            >
-                                                <Check className="h-4 w-4" /> I have it
-                                            </button>
-                                            <button
-                                                onClick={() => handleBroadcastResponse(req, 'not_available')}
-                                                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 py-2 rounded-lg font-medium text-sm transition-colors flex justify-center items-center gap-1"
-                                            >
-                                                <X className="h-4 w-4" /> Ignore
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
             ) : (
                 // RESERVATIONS TAB
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
