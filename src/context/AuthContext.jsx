@@ -165,13 +165,25 @@ export const AuthProvider = ({ children }) => {
         setUser(null);
     };
 
-    const [showReset, setShowReset] = useState(false);
-
     useEffect(() => {
-        // Show reset button if loading takes more than 3 seconds
+        // AUTO-HEAL: If loading gets stuck > 5s, auto-fix it.
         const timer = setTimeout(() => {
-            if (loading) setShowReset(true);
-        }, 3000);
+            if (loading) {
+                console.warn("Auth taking too long. Attempting auto-recovery.");
+                const hasRetried = sessionStorage.getItem('auth_auto_fix');
+
+                if (!hasRetried) {
+                    sessionStorage.setItem('auth_auto_fix', 'true');
+                    localStorage.clear(); // Wipe potential bad state
+                    window.location.reload(); // Hard refresh
+                } else {
+                    // Already tried fixing, show error
+                    setAuthError("Application stuck. Please clear your browser cache manually or try Incognito mode.");
+                    setLoading(false);
+                }
+            }
+        }, 5000); // 5 second timeout
+
         return () => clearTimeout(timer);
     }, [loading]);
 
@@ -181,14 +193,15 @@ export const AuthProvider = ({ children }) => {
                 <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mb-4"></div>
                     <p className="text-gray-500 animate-pulse text-sm">Authenticating Securely...</p>
-                    {showReset && (
-                        <button
-                            onClick={handleHardReset}
-                            className="mt-8 text-xs text-red-500 hover:text-red-700 underline font-semibold"
-                        >
-                            Taking too long? Click here to Reset Check
-                        </button>
-                    )}
+                    <p className="text-xs text-gray-400 mt-2">Checking credentials...</p>
+
+                    {/* Always allow manual escape if it feels stuck */}
+                    <button
+                        onClick={handleHardReset}
+                        className="mt-12 text-xs text-red-500 hover:text-red-700 underline font-semibold transition-opacity opacity-80 hover:opacity-100"
+                    >
+                        Trouble loading? Click here to Reset
+                    </button>
                 </div>
             ) : authError && !user ? (
                 <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
