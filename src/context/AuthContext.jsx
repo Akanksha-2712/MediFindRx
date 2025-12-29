@@ -11,6 +11,18 @@ export const AuthProvider = ({ children }) => {
     const [authError, setAuthError] = useState(null);
 
     useEffect(() => {
+        // AUTO-FIX: Check if specific version exists to clear stale cache from previous buggy versions
+        const APP_VERSION = 'v1.2_fix_login';
+        const storedVersion = localStorage.getItem('app_version');
+
+        if (storedVersion !== APP_VERSION) {
+            console.log("New version detected. Clearing potential stale cache...");
+            // Preserve specific keys if needed, but for now clear auth to be safe
+            localStorage.clear();
+            localStorage.setItem('app_version', APP_VERSION);
+            // We don't force reload here to avoid infinite loops, but the clear will ensure getSession() starts fresh
+        }
+
         let mounted = true;
 
         // Safety timeout in case Supabase hangs (e.g. invalid key or cookie block)
@@ -20,7 +32,7 @@ export const AuthProvider = ({ children }) => {
                 setAuthError("Loading is taking longer than expected. Stale browser data might be causing a hang.");
                 setLoading(false);
             }
-        }, 10000); // reduced to 10 seconds for better responsiveness
+        }, 60000); // Increased to 60 seconds per user request
 
         // Check active session
         const getSession = async () => {
@@ -66,29 +78,45 @@ export const AuthProvider = ({ children }) => {
 
     const fetchProfile = async (userId, email) => {
         try {
-            const { data, error } = await supabase
+            console.log("Fetching profile for:", userId);
+            // Robust fetch: use limit(1) instead of single()
+            const { data: profiles, error } = await supabase
                 .from('profiles')
                 .select('*')
                 .eq('id', userId)
-                .single();
+                .limit(1);
+
+            const profile = profiles?.[0];
 
             if (error) {
                 console.error('Error fetching profile:', error);
+                setAuthError("Profile fetch error: " + error.message);
+            } else if (!profile) {
+                console.warn("No profile found for user:", userId);
+                setAuthError("Profile missing. Please contact support.");
             } else {
+                console.log("Profile found:", profile.role);
                 let pharmacyId = null;
-                if (data.role === 'pharmacy') {
+
+                if (profile.role === 'pharmacy') {
                     const { data: pharmacyData } = await supabase
                         .from('pharmacies')
                         .select('id')
                         .eq('owner_id', userId)
-                        .single();
-                    if (pharmacyData) pharmacyId = pharmacyData.id;
+                        .limit(1); // Robust fetch
+
+                    if (pharmacyData && pharmacyData.length > 0) {
+                        pharmacyId = pharmacyData[0].id;
+                    }
                 }
-                setUser({ ...data, email, pharmacyId });
+
+                setUser({ ...profile, email, pharmacyId });
             }
         } catch (err) {
-            console.error('Unexpected error:', err);
+            console.error('Unexpected error in fetchProfile:', err);
+            setAuthError("Login Error: " + err.message);
         } finally {
+            console.log("Finished loading.");
             setLoading(false);
         }
     };
@@ -137,12 +165,30 @@ export const AuthProvider = ({ children }) => {
         setUser(null);
     };
 
+    const [showReset, setShowReset] = useState(false);
+
+    useEffect(() => {
+        // Show reset button if loading takes more than 3 seconds
+        const timer = setTimeout(() => {
+            if (loading) setShowReset(true);
+        }, 3000);
+        return () => clearTimeout(timer);
+    }, [loading]);
+
     return (
         <AuthContext.Provider value={{ user, login, logout, register, loading, authError }}>
             {loading ? (
                 <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mb-4"></div>
                     <p className="text-gray-500 animate-pulse text-sm">Authenticating Securely...</p>
+                    {showReset && (
+                        <button
+                            onClick={handleHardReset}
+                            className="mt-8 text-xs text-red-500 hover:text-red-700 underline font-semibold"
+                        >
+                            Taking too long? Click here to Reset Check
+                        </button>
+                    )}
                 </div>
             ) : authError && !user ? (
                 <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">

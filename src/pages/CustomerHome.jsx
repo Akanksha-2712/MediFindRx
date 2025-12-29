@@ -182,6 +182,14 @@ const CustomerHome = () => {
 
             if (error) {
                 console.error("Supabase Insert Error:", error);
+
+                // Self-Healing: If Foreign Key violation (stale drug_id), reload
+                if (error.code === '23503' || error.message.includes('foreign key')) {
+                    alert("The medicine list is outdated. Refreshing data...");
+                    window.location.reload();
+                    return;
+                }
+
                 alert("Database Error: " + error.message);
                 return;
             }

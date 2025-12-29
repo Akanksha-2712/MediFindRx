@@ -117,11 +117,56 @@ const PharmacyDashboard = () => {
         );
     }
 
-    if (!user || !user.pharmacyId) {
+    // --- SELF-HEALING: Auto-create pharmacy record if missing ---
+    const [isInitializing, setIsInitializing] = useState(false);
+
+    useEffect(() => {
+        const initializePharmacy = async () => {
+            if (user && user.role === 'pharmacy' && !user.pharmacyId && !isInitializing) {
+                setIsInitializing(true);
+                // console.log("Self-Healing: Creating missing pharmacy record...");
+
+                try {
+                    const { error } = await supabase.from('pharmacies').insert([{
+                        name: user.name || 'My Pharmacy',
+                        owner_id: user.id,
+                        address: 'Pending Address Update',
+                        phone: 'Pending Phone',
+                        approved: false // Default to false, let Admin approve
+                    }]);
+
+                    if (error) {
+                        console.error("Auto-creation failed:", error);
+                    } else {
+                        // console.log("Auto-creation success! Reloading...");
+                        window.location.reload(); // Reload to refresh AuthContext and get the new ID
+                    }
+                } catch (err) {
+                    console.error("Initialization error:", err);
+                }
+            }
+        };
+
+        initializePharmacy();
+    }, [user, isInitializing]);
+
+    // Show initializing screen if we are fixing the account
+    if (user && !user.pharmacyId && user.role === 'pharmacy') {
+        return (
+            <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500 mb-4"></div>
+                <h2 className="text-xl font-semibold text-gray-800">Setting up your Pharmacy...</h2>
+                <p className="text-gray-500">Creating your dashboard workspace.</p>
+            </div>
+        );
+    }
+
+    // Fallback error only if something really weird happens (e.g. role is wrong)
+    if (!user || (!user.pharmacyId && user.role !== 'pharmacy')) {
         return (
             <div className="max-w-6xl mx-auto px-4 py-8 text-center">
-                <h1 className="text-2xl font-bold text-gray-900">Pharmacy Setup Required</h1>
-                <p className="text-gray-600 mt-2">Please contact admin to link your account to a pharmacy.</p>
+                <h1 className="text-2xl font-bold text-gray-900">Access Denied</h1>
+                <p className="text-gray-600 mt-2">You do not have a pharmacy account linked.</p>
             </div>
         );
     }
