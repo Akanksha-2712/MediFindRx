@@ -129,6 +129,56 @@ const PharmacyDashboard = () => {
         initializePharmacy();
     }, [user, isInitializing]);
 
+    // --- SELF-HEALING: Auto-Initialize Inventory (100 units) if empty ---
+    const [isInventoryInitializing, setIsInventoryInitializing] = useState(false);
+
+    useEffect(() => {
+        const initializeInventory = async () => {
+            // Check prerequisites:
+            // 1. We have a valid pharmacy ID
+            // 2. We have a list of drugs
+            // 3. We are not already initializing
+            if (!user?.pharmacyId || drugs.length === 0 || isInventoryInitializing) return;
+
+            // 4. Check if we actually have ANY inventory
+            // Note: 'inventory' comes from DataContext and contains ALL items for ALL pharmacies (or filtered, depending on implementation).
+            // We need to be sure we don't already have items.
+            const myItems = inventory.filter(i => i.pharmacy_id === user.pharmacyId);
+
+            if (myItems.length === 0) {
+                console.log("No inventory found for this pharmacy. Auto-initializing stock...");
+                setIsInventoryInitializing(true);
+
+                try {
+                    const newStock = drugs.map(drug => ({
+                        pharmacy_id: user.pharmacyId,
+                        drug_id: drug.id,
+                        stock: 100
+                    }));
+
+                    const { error } = await supabase
+                        .from('inventory')
+                        .insert(newStock);
+
+                    if (error) {
+                        console.error("Auto-stock failed:", error);
+                    } else {
+                        console.log("Stock initialized successfully!");
+                        // Reload to fetch fresh data
+                        window.location.reload();
+                    }
+                } catch (err) {
+                    console.error("Critical error in auto-stock:", err);
+                }
+            }
+        };
+
+        // Run this check
+        if (drugs.length > 0) {
+            initializeInventory();
+        }
+    }, [user?.pharmacyId, drugs, inventory, isInventoryInitializing]);
+
     if (user && !user.pharmacyId && user.role === 'pharmacy') {
         return (
             <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
