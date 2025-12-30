@@ -1,6 +1,7 @@
--- Add quantity column to reservations table to fix insert error
-alter table reservations 
-add column if not exists quantity integer default 1;
-
--- Verify
-select * from reservations limit 1;
+-- Add quantity column to reservations table if it doesn't exist
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'reservations' AND column_name = 'quantity') THEN
+        ALTER TABLE reservations ADD COLUMN quantity INTEGER DEFAULT 1;
+    END IF;
+END $$;

@@ -5,9 +5,8 @@ import { supabase } from '../supabaseClient';
 import { Search, MapPin, Navigation, Camera, Bell, CheckCircle, XCircle, CalendarCheck, Bed, Ambulance } from 'lucide-react';
 import HospitalListModal from '../components/HospitalListModal';
 
-
 const CustomerHome = () => {
-    const { getPharmaciesWithDrug, user } = useData(); // Reverted to getPharmaciesWithDrug
+    const { getPharmaciesWithDrug, user } = useData();
     const [searchTerm, setSearchTerm] = useState('');
     const [results, setResults] = useState([]);
     const [hasSearched, setHasSearched] = useState(false);
@@ -16,8 +15,15 @@ const CustomerHome = () => {
     const [showHospitalList, setShowHospitalList] = useState(null);
     const [notifications, setNotifications] = useState([]);
     const [showNotifications, setShowNotifications] = useState(false);
+    const [quantities, setQuantities] = useState({});
+
     const fileInputRef = React.useRef(null);
     const navigate = useNavigate();
+
+    const handleQuantityChange = (pharmacyId, value, maxStock) => {
+        const qty = Math.max(1, Math.min(parseInt(value) || 1, maxStock));
+        setQuantities(prev => ({ ...prev, [pharmacyId]: qty }));
+    };
 
     // Listen for customer-specific notifications
     useEffect(() => {
@@ -154,9 +160,11 @@ const CustomerHome = () => {
     };
 
     const handleReserve = async (pharmacyId, drugId) => {
+        const quantity = quantities[pharmacyId] || 1;
+
         // 1. SHOW THE ALERT IMMEDIATELY
-        alert(`Starting Reservation... \nPharmacy ID: ${pharmacyId}\nDrug ID: ${drugId}`);
-        console.log(`Starting Reservation flow for P:${pharmacyId} D:${drugId}`);
+        alert(`Starting Reservation... \nPharmacy ID: ${pharmacyId}\nDrug ID: ${drugId}\nQuantity: ${quantity}`);
+        console.log(`Starting Reservation flow for P:${pharmacyId} D:${drugId} Qty:${quantity}`);
 
         try {
             // 2. Prepare Data
@@ -173,9 +181,10 @@ const CustomerHome = () => {
                     user_id: userId,
                     customer_name: customerName,
                     otp: otp,
-                    status: 'pending'
+                    status: 'pending',
+                    quantity: quantity
                 }])
-                .select(); // Use select() without single() to be safer
+                .select();
 
             if (error) {
                 console.error("Supabase Insert Error:", error);
@@ -403,32 +412,73 @@ const CustomerHome = () => {
 
                         <div className="grid gap-6 md:grid-cols-2">
                             {results.map((item, index) => (
-                                <div key={index} className="bg-white rounded-xl p-6 shadow-md hover:shadow-lg transition-shadow border border-gray-100">
-                                    <div className="flex justify-between items-start mb-4">
-                                        <div>
-                                            <h3 className="font-bold text-lg text-gray-900">{item.name}</h3>
-                                            <div className="flex items-center text-gray-500 text-sm mt-1">
-                                                <MapPin className="h-4 w-4 mr-1 text-primary" />
-                                                {item.address} {item.distance != null && item.distance !== Infinity && (
-                                                    <span className="ml-2 text-primary font-bold">({item.distance.toFixed(1)} km away)</span>
-                                                )}
-                                            </div>
-                                            <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium">
-                                                In Stock: {item.stock}
-                                            </span>
+                                <div key={index} className="bg-white rounded-xl p-5 shadow-sm hover:shadow-md transition-all border border-gray-100 flex flex-col h-full group">
+                                    {/* Header: Name & Price */}
+                                    <div className="flex justify-between items-start mb-3">
+                                        <h3 className="font-bold text-lg text-gray-900 leading-tight group-hover:text-primary transition-colors">
+                                            {item.name}
+                                        </h3>
+                                        <div className="text-right shrink-0">
+                                            <span className="block text-[10px] text-gray-400 uppercase font-bold tracking-wider">Price</span>
+                                            <span className="font-bold text-xl text-primary">₹{item.drug?.price?.toFixed(2) || 'N/A'}</span>
+                                        </div>
+                                    </div>
+
+                                    {/* Body: Address & Distance */}
+                                    <div className="mb-4 flex-grow">
+                                        <div className="flex items-start text-gray-500 text-sm mb-2">
+                                            <MapPin className="h-4 w-4 mr-1.5 mt-0.5 text-gray-400 shrink-0" />
+                                            <span className="leading-snug text-xs sm:text-sm">{item.address}</span>
                                         </div>
 
-                                        <div className="border-t border-gray-100 pt-4 mt-4">
-                                            <div className="flex justify-between items-center mb-2">
-                                                <span className="text-gray-600">Price</span>
-                                                <span className="font-bold text-lg text-primary">₹{item.drug?.price?.toFixed(2) || 'N/A'}</span>
+                                        {/* Distance Badge */}
+                                        <div className="ml-5">
+                                            {item.distance != null && item.distance !== Infinity ? (
+                                                <span className="inline-flex items-center bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md text-[11px] font-bold border border-indigo-100">
+                                                    <Navigation className="w-3 h-3 mr-1 fill-current" />
+                                                    {item.distance.toFixed(1)} km away
+                                                </span>
+                                            ) : (
+                                                <span className="text-[11px] text-gray-400 italic">
+                                                    Location unavailable
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Footer: Controls */}
+                                    <div className="pt-4 border-t border-gray-50 mt-auto flex flex-wrap items-center justify-between gap-3">
+                                        {/* Stock Badge */}
+                                        <span className="bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-lg text-xs font-bold border border-emerald-100">
+                                            {item.stock} left
+                                        </span>
+
+                                        <div className="flex items-center gap-2 ml-auto">
+                                            {/* Quantity Input */}
+                                            <div className="flex items-center bg-gray-50 rounded-lg border border-gray-200 focus-within:border-primary focus-within:ring-2 focus-within:ring-sky-100 transition-all">
+                                                <span className="text-[10px] text-gray-500 px-2 font-bold uppercase select-none">Qty</span>
+                                                <div className="h-4 w-px bg-gray-200"></div>
+                                                <input
+                                                    type="number"
+                                                    min="1"
+                                                    max={item.stock}
+                                                    value={quantities[item.id] || 1}
+                                                    onChange={(e) => handleQuantityChange(item.id, e.target.value, item.stock)}
+                                                    className="w-12 bg-transparent text-center font-bold text-sm py-1.5 focus:outline-none text-gray-900"
+                                                />
                                             </div>
+
+                                            {/* Action Button */}
                                             <button
                                                 type="button"
                                                 onClick={() => handleReserve(item.id, item.drug.id)}
-                                                className="w-full mt-2 bg-primary hover:bg-sky-600 text-white py-2 rounded-lg font-medium transition-colors"
+                                                className="bg-primary hover:bg-sky-600 active:scale-95 text-white px-4 py-1.5 rounded-lg text-sm font-bold shadow-sm shadow-sky-100 transition-all flex items-center gap-1"
                                             >
-                                                {prescriptionFile ? 'Reserve with Prescription' : 'Reserve Medicine'}
+                                                {prescriptionFile ? (
+                                                    <>Reserve <span className="opacity-70 text-xs font-normal">+Doc</span></>
+                                                ) : (
+                                                    'Reserve'
+                                                )}
                                             </button>
                                         </div>
                                     </div>
