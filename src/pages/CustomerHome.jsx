@@ -168,7 +168,38 @@ const CustomerHome = () => {
 
         try {
             // 2. Prepare Data
-            const customerName = user?.user_metadata?.name || 'Guest User';
+            let customerName = 'Guest User';
+
+            if (user) {
+                // Priority 1: Check User Metadata
+                customerName = user.user_metadata?.full_name || user.user_metadata?.name;
+
+                // Priority 2: Check Profiles Table (Async) - highly recommended if metadata is empty
+                if (!customerName) {
+                    try {
+                        const { data: profile } = await supabase
+                            .from('profiles')
+                            .select('full_name, name')
+                            .eq('id', user.id)
+                            .single();
+
+                        if (profile) {
+                            customerName = profile.full_name || profile.name;
+                        }
+                    } catch (fetchErr) {
+                        console.warn("Could not fetch profile name, falling back.", fetchErr);
+                    }
+                }
+
+                // Priority 3: Fallback to Email
+                if (!customerName && user.email) {
+                    customerName = user.email.split('@')[0];
+                }
+
+                // Final Fallback if somehow everything is empty but they are logged in
+                if (!customerName) customerName = "Valued Customer";
+            }
+
             const userId = user?.id || null;
             const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
