@@ -7,13 +7,13 @@ import HospitalListModal from '../components/HospitalListModal';
 
 
 const CustomerHome = () => {
-    const { getPharmaciesWithDrug, user } = useData();
+    const { getPharmaciesWithDrug, user } = useData(); // Reverted to getPharmaciesWithDrug
     const [searchTerm, setSearchTerm] = useState('');
     const [results, setResults] = useState([]);
     const [hasSearched, setHasSearched] = useState(false);
     const [prescriptionFile, setPrescriptionFile] = useState(null);
     const [prescriptionPreview, setPrescriptionPreview] = useState(null);
-    const [showHospitalList, setShowHospitalList] = useState(null); // 'appointment' | 'bed' | null
+    const [showHospitalList, setShowHospitalList] = useState(null);
     const [notifications, setNotifications] = useState([]);
     const [showNotifications, setShowNotifications] = useState(false);
     const fileInputRef = React.useRef(null);
@@ -24,7 +24,6 @@ const CustomerHome = () => {
         if (!user?.id) return;
 
         const setupSubscriptions = async () => {
-            // 1. Bed Reservations
             const bedChannel = supabase
                 .channel('customer-bed-updates')
                 .on('postgres_changes', {
@@ -38,7 +37,6 @@ const CustomerHome = () => {
                 })
                 .subscribe();
 
-            // 2. Appointments
             const apptChannel = supabase
                 .channel('customer-appt-updates')
                 .on('postgres_changes', {
@@ -52,7 +50,6 @@ const CustomerHome = () => {
                 })
                 .subscribe();
 
-            // 3. Ambulance / SOS
             const sosChannel = supabase
                 .channel('customer-sos-updates')
                 .on('postgres_changes', {
@@ -87,7 +84,6 @@ const CustomerHome = () => {
         };
         setNotifications(prev => [newNotif, ...prev]);
 
-        // Browsre notification as well
         if (Notification.permission === "granted") {
             new Notification(title, { body: message });
         } else if (Notification.permission !== "denied") {
@@ -95,56 +91,58 @@ const CustomerHome = () => {
         }
     };
 
-    const calculateDistance = (lat1, lon1, lat2, lon2) => {
-        if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
-        const R = 6371;
-        const dLat = (lat2 - lat1) * (Math.PI / 180);
-        const dLon = (lon2 - lon1) * (Math.PI / 180);
-        const a =
-            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
-            Math.sin(dLon / 2) * Math.sin(dLon / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c;
-    };
-
-    const handleSearch = async (e) => {
+    const handleSearch = (e) => {
         e.preventDefault();
         if (!searchTerm.trim()) return;
 
-        const allPharmacies = getPharmaciesWithDrug(searchTerm);
+        // Client-side Search Logic
+        let foundPharmacies = getPharmaciesWithDrug(searchTerm);
 
-        const performSearch = (userLat = null, userLng = null) => {
-            let sortedResults = [...allPharmacies];
-
-            if (userLat && userLng) {
-                sortedResults = sortedResults.map(p => ({
-                    ...p,
-                    distance: calculateDistance(userLat, userLng, p.latitude, p.longitude)
-                })).sort((a, b) => a.distance - b.distance);
-            } else {
-                // Fallback to price sort if no location
-                sortedResults = sortedResults.sort((a, b) => a.drug.price - b.drug.price);
-            }
-
-            setResults(sortedResults.slice(0, 2));
-            setHasSearched(true);
-        };
-
+        // Calculate Distances (Client-Side)
         if ("geolocation" in navigator) {
             navigator.geolocation.getCurrentPosition(
                 (position) => {
-                    performSearch(position.coords.latitude, position.coords.longitude);
+                    const userLat = position.coords.latitude;
+                    const userLng = position.coords.longitude;
+
+                    foundPharmacies = foundPharmacies.map(p => {
+                        const dist = calculateDistance(userLat, userLng, p.latitude, p.longitude);
+                        return { ...p, distance: dist };
+                    }).sort((a, b) => (a.distance || Infinity) - (b.distance || Infinity));
+
+                    setResults(foundPharmacies);
+                    setHasSearched(true);
                 },
                 (error) => {
-                    console.warn("Location access denied, falling back to price sort.");
-                    performSearch();
+                    console.warn("Location access denied or error:", error);
+                    // Fallback: Just show results without distance
+                    setResults(foundPharmacies);
+                    setHasSearched(true);
                 },
                 { timeout: 5000 }
             );
         } else {
-            performSearch();
+            setResults(foundPharmacies);
+            setHasSearched(true);
         }
+    };
+
+    // Restore helper for Client-Side Distance
+    const calculateDistance = (lat1, lon1, lat2, lon2) => {
+        if (!lat1 || !lon1 || !lat2 || !lon2) return null;
+        const R = 6371; // Radius of the earth in km
+        const dLat = deg2rad(lat2 - lat1);
+        const dLon = deg2rad(lon2 - lon1);
+        const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c; // Distance in km
+    };
+
+    const deg2rad = (deg) => {
+        return deg * (Math.PI / 180);
     };
 
     const handleFileSelect = (e) => {
@@ -175,8 +173,7 @@ const CustomerHome = () => {
                     user_id: userId,
                     customer_name: customerName,
                     otp: otp,
-                    status: 'pending',
-                    quantity: 1
+                    status: 'pending'
                 }])
                 .select(); // Use select() without single() to be safer
 
@@ -412,28 +409,28 @@ const CustomerHome = () => {
                                             <h3 className="font-bold text-lg text-gray-900">{item.name}</h3>
                                             <div className="flex items-center text-gray-500 text-sm mt-1">
                                                 <MapPin className="h-4 w-4 mr-1 text-primary" />
-                                                {item.address} {item.distance !== undefined && item.distance !== Infinity && (
+                                                {item.address} {item.distance != null && item.distance !== Infinity && (
                                                     <span className="ml-2 text-primary font-bold">({item.distance.toFixed(1)} km away)</span>
                                                 )}
                                             </div>
+                                            <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium">
+                                                In Stock: {item.stock}
+                                            </span>
                                         </div>
-                                        <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium">
-                                            In Stock: {item.stock}
-                                        </span>
-                                    </div>
 
-                                    <div className="border-t border-gray-100 pt-4 mt-4">
-                                        <div className="flex justify-between items-center mb-2">
-                                            <span className="text-gray-600">Price</span>
-                                            <span className="font-bold text-lg text-primary">₹{item.drug.price.toFixed(2)}</span>
+                                        <div className="border-t border-gray-100 pt-4 mt-4">
+                                            <div className="flex justify-between items-center mb-2">
+                                                <span className="text-gray-600">Price</span>
+                                                <span className="font-bold text-lg text-primary">₹{item.drug?.price?.toFixed(2) || 'N/A'}</span>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleReserve(item.id, item.drug.id)}
+                                                className="w-full mt-2 bg-primary hover:bg-sky-600 text-white py-2 rounded-lg font-medium transition-colors"
+                                            >
+                                                {prescriptionFile ? 'Reserve with Prescription' : 'Reserve Medicine'}
+                                            </button>
                                         </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => handleReserve(item.id, item.drug.id)}
-                                            className="w-full mt-2 bg-primary hover:bg-sky-600 text-white py-2 rounded-lg font-medium transition-colors"
-                                        >
-                                            {prescriptionFile ? 'Reserve with Prescription' : 'Reserve Medicine'}
-                                        </button>
                                     </div>
                                 </div>
                             ))}

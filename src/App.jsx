@@ -35,6 +35,7 @@ const RoleBasedRedirect = () => {
 function App() {
   return (
     <AuthProvider>
+      {/* Force Refresh: v1.3 - Stabilizing Context */}
       <DataProvider>
         <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <div className="min-h-screen bg-gradient-to-r from-indigo-100 via-sky-100 to-teal-100">

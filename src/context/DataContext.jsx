@@ -1,10 +1,17 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { useAuth } from './AuthContext';
+import { withRetry, keepAlive } from '../utils/retryHelper';
 
 const DataContext = createContext();
 
-export const useData = () => useContext(DataContext);
+export const useData = () => {
+    const context = useContext(DataContext);
+    if (context === undefined) {
+        throw new Error('useData must be used within a DataProvider');
+    }
+    return context;
+};
 
 export const DataProvider = ({ children }) => {
     const { user } = useAuth();
@@ -17,9 +24,12 @@ export const DataProvider = ({ children }) => {
     const fetchData = async () => {
         setLoading(true);
         try {
+            // RESTORED GLOBAL FETCH (Safety Net)
+            // While we optimize, we keep this to ensure the app ALWAYS works even if RPC fails.
             const { data: drugsData } = await supabase.from('drugs').select('*');
             const { data: pharmaciesData } = await supabase.from('pharmacies').select('*');
             const { data: inventoryData } = await supabase.from('inventory').select('*');
+            // Allow global reservations for now to ensure dashboard works immediately on load
             const { data: reservationsData } = await supabase.from('reservations').select('*');
 
             if (drugsData) setDrugs(drugsData);
@@ -27,7 +37,7 @@ export const DataProvider = ({ children }) => {
             if (inventoryData) setInventory(inventoryData);
             if (reservationsData) setReservations(reservationsData);
         } catch (error) {
-            console.error('Error fetching data:', error);
+            console.error('Error fetching reference data:', error);
         } finally {
             setLoading(false);
         }
@@ -35,18 +45,14 @@ export const DataProvider = ({ children }) => {
 
     useEffect(() => {
         fetchData();
-
         // Optional: Realtime subscriptions could go here
     }, []);
 
     const getPharmaciesWithDrug = (drugName) => {
+        // ... (Keep existing for fallback, or we can deprecate it)
         if (!drugs.length || !inventory.length) return [];
-
         const drug = drugs.find(d => d.name.toLowerCase().includes(drugName.toLowerCase()));
         if (!drug) return [];
-
-        console.log(`Searching for pharmacies with: ${drug.name} (ID: ${drug.id})`);
-
         return inventory
             .filter(item => item.drug_id === drug.id && item.stock > 0)
             .map(item => {
@@ -56,6 +62,8 @@ export const DataProvider = ({ children }) => {
             })
             .filter(Boolean);
     };
+
+    // searchMedicines removed (Reverted to getPharmaciesWithDrug)
 
     const updateStock = async (pharmacyId, drugId, newStock) => {
         const stockValue = parseInt(newStock, 10);
@@ -141,6 +149,9 @@ export const DataProvider = ({ children }) => {
         const reservation = reservations.find(r => r.id === reservationId);
         if (!reservation) return;
 
+        // DB Trigger will automatically restore stock if status changes from confirmed -> cancelled
+        // We do NOT need to manually call updateStock here anymore.
+
         const { error } = await supabase
             .from('reservations')
             .update({ status: 'cancelled' })
@@ -148,11 +159,9 @@ export const DataProvider = ({ children }) => {
 
         if (!error) {
             setReservations(prev => prev.map(r => r.id === reservationId ? { ...r, status: 'cancelled' } : r));
-            // Restore stock
-            const inventoryItem = inventory.find(i => i.pharmacy_id === reservation.pharmacy_id && i.drug_id === reservation.drug_id);
-            if (inventoryItem) {
-                await updateStock(reservation.pharmacy_id, reservation.drug_id, inventoryItem.stock + 1); // Assuming qty 1
-            }
+        } else {
+            console.error("Error cancelling reservation:", error);
+            alert("Failed to cancel: " + error.message);
         }
     };
 
@@ -167,27 +176,44 @@ export const DataProvider = ({ children }) => {
         if (data) setReservations(data);
     };
 
+    // CONNECTION HEARTBEAT
+    useEffect(() => {
+        const timer = setInterval(() => {
+            if (user) keepAlive(supabase);
+        }, 45000); // Check every 45s
+        return () => clearInterval(timer);
+    }, [user]);
+
     const confirmReservation = async (reservationId) => {
         console.log(`Confirming reservation #${reservationId}...`);
 
-        try {
+        // Use Retry Logic with 15s Timeout Race
+        const confirmAction = async () => {
             const { error } = await supabase
                 .from('reservations')
                 .update({ status: 'confirmed' })
                 .eq('id', reservationId);
+            if (error) throw error;
+            return true;
+        };
 
-            if (!error) {
-                console.log(`Reservation #${reservationId} confirmed successfully.`);
-                // Update local state immediately for UI responsiveness
-                setReservations(prev => prev.map(r => r.id === reservationId ? { ...r, status: 'confirmed' } : r));
-                alert("✅ Order Confirmed! Please prepare the medicine.");
-            } else {
-                console.error("Confirm error:", error);
-                alert("Confirm Failed: " + error.message);
-            }
+        try {
+            // Race: Retry Logic vs Hard Timeout (20s total limit for all retries)
+            const timeout = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Network Unresponsive')), 20000)
+            );
+
+            // Execute with Auto-Retry (3 attempts)
+            await Promise.race([withRetry(confirmAction, 3, 1000), timeout]);
+
+            // If we get here, it succeeded
+            console.log(`Reservation #${reservationId} confirmed.`);
+            setReservations(prev => prev.map(r => r.id === reservationId ? { ...r, status: 'confirmed' } : r));
+            alert("✅ Order Confirmed! Please prepare the medicine.");
+
         } catch (err) {
             console.error("Confirm Exception:", err);
-            alert("System Error during confirmation.");
+            alert("Confirm Failed: " + err.message + ". Please try again.");
         }
     };
 
@@ -256,6 +282,7 @@ export const DataProvider = ({ children }) => {
             inventory,
             reservations,
             getPharmaciesWithDrug,
+            // searchMedicines, // Removed
             updateStock,
             addReservation,
             simpleReserve,

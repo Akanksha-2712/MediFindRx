@@ -6,71 +6,59 @@ import { Package, Edit2, Save, X, ClipboardList, CheckCircle, Clock, AlertTriang
 
 const PharmacyDashboard = () => {
     const { user } = useAuth();
-    const { drugs, inventory, updateStock, getReservationsForPharmacy, refreshReservations, confirmReservation, verifyOtp, pharmacies } = useData();
+    // Restored global context properties
+    const { drugs, inventory, updateStock, getReservationsForPharmacy, confirmReservation, verifyOtp, pharmacies, refreshReservations } = useData();
 
     const [activeTab, setActiveTab] = useState('inventory');
     const [editingId, setEditingId] = useState(null);
     const [editValue, setEditValue] = useState('');
     const [otpInput, setOtpInput] = useState({});
 
+    // Real-time Reservations Listener
+    useEffect(() => {
+        if (!user?.pharmacyId) return;
 
+        console.log("Setting up Realtime Listener for Pharmacy:", user.pharmacyId);
+
+        const channel = supabase
+            .channel('pharmacy-reservations')
+            .on('postgres_changes',
+                { event: '*', schema: 'public', table: 'reservations', filter: `pharmacy_id=eq.${user.pharmacyId}` },
+                (payload) => {
+                    console.log("Realtime Reservation Update:", payload);
+                    refreshReservations(); // Refresh global data
+
+                    if (payload.eventType === 'INSERT') {
+                        // Play sound or show notification
+                        if (Notification.permission === "granted") {
+                            new Notification("New Order Received!", { body: `Order #${payload.new.id} for ${payload.new.customer_name}` });
+                        } else if (Notification.permission !== "denied") {
+                            Notification.requestPermission();
+                        }
+                    }
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [user?.pharmacyId]);
 
     // Get current pharmacy details
     const myPharmacy = pharmacies ? pharmacies.find(p => p.owner_id === user?.id) : null;
 
-    // Debug State
-    const [debugLogs, setDebugLogs] = useState([]);
-    const addLog = (msg) => setDebugLogs(prev => [`${new Date().toLocaleTimeString()}: ${msg}`, ...prev].slice(0, 10));
-
-    // Real-time Reservations Listener & Polling Fallback
-    useEffect(() => {
-        if (!user?.pharmacyId) {
-            addLog("Waiting for Pharmacy ID...");
-            return;
-        }
-
-        addLog(`Subscribing for Pharmacy: ${user.pharmacyId}`);
-
-        // 1. Real-time Subscription
-        const reservationChannel = supabase
-            .channel('public:reservations')
-            .on(
-                'postgres_changes',
-                { event: 'INSERT', schema: 'public', table: 'reservations', filter: `pharmacy_id=eq.${user.pharmacyId}` },
-                (payload) => {
-                    console.log("New Reservation!", payload);
-                    addLog(`EVENT: New Order #${payload.new.id}`);
-                    alert(`🔔 NEW ORDER: #${payload.new.id}\nCustomer: ${payload.new.customer_name}\nStatus: ${payload.new.status}`);
-
-                    if (typeof refreshReservations === 'function') {
-                        refreshReservations();
-                    } else {
-                        addLog("Error: refreshReservations not ready");
-                    }
-
-                    setActiveTab('reservations');
-                }
-            )
-            .subscribe((status) => {
-                addLog(`Channel Status: ${status}`);
-            });
-
-        // 2. Polling Fallback (Every 5 seconds)
-        const intervalId = setInterval(() => {
-            if (typeof refreshReservations === 'function') {
-                refreshReservations();
-            } else {
-                // addLog("Polling skipped: refreshReservations missing");
-            }
-        }, 5000);
-
-        return () => {
-            supabase.removeChannel(reservationChannel);
-            clearInterval(intervalId);
+    // Use Global Inventory and Reservations from Context
+    const currentInventory = drugs.map(drug => {
+        const stockItem = inventory.find(i => i.pharmacy_id === user?.pharmacyId && i.drug_id === drug.id);
+        return {
+            ...drug,
+            stock: stockItem ? stockItem.stock : 0
         };
-    }, [user?.pharmacyId]);
+    });
 
-
+    // Use Global Reservations Helper
+    const myReservations = user?.pharmacyId ? getReservationsForPharmacy(user.pharmacyId) : [];
 
     // Inventory Helpers
     const handleEdit = (drugId, currentStock) => {
@@ -78,15 +66,13 @@ const PharmacyDashboard = () => {
         setEditValue(currentStock);
     };
 
-    const handleSave = (drugId) => {
-        updateStock(user.pharmacyId, drugId, editValue);
+    const handleSave = async (drugId) => {
+        await updateStock(user.pharmacyId, drugId, editValue);
         setEditingId(null);
     };
 
     const handleVerifyOtp = async (reservationId) => {
         const otp = otpInput[reservationId];
-        alert(`DEBUG: Verifying #${reservationId} with OTP: "${otp}"`);
-
         if (otp && otp.trim().length > 0) {
             await verifyOtp(reservationId, otp);
             setOtpInput(prev => ({ ...prev, [reservationId]: '' }));
@@ -96,8 +82,6 @@ const PharmacyDashboard = () => {
     };
 
     // --- RENDER GUARDS ---
-
-
 
     if (myPharmacy && myPharmacy.approved === false) {
         return (
@@ -124,22 +108,17 @@ const PharmacyDashboard = () => {
         const initializePharmacy = async () => {
             if (user && user.role === 'pharmacy' && !user.pharmacyId && !isInitializing) {
                 setIsInitializing(true);
-                // console.log("Self-Healing: Creating missing pharmacy record...");
-
                 try {
                     const { error } = await supabase.from('pharmacies').insert([{
                         name: user.name || 'My Pharmacy',
                         owner_id: user.id,
                         address: 'Pending Address Update',
                         phone: 'Pending Phone',
-                        approved: false // Default to false, let Admin approve
+                        approved: false
                     }]);
 
-                    if (error) {
-                        console.error("Auto-creation failed:", error);
-                    } else {
-                        // console.log("Auto-creation success! Reloading...");
-                        window.location.reload(); // Reload to refresh AuthContext and get the new ID
+                    if (!error) {
+                        window.location.reload();
                     }
                 } catch (err) {
                     console.error("Initialization error:", err);
@@ -150,18 +129,15 @@ const PharmacyDashboard = () => {
         initializePharmacy();
     }, [user, isInitializing]);
 
-    // Show initializing screen if we are fixing the account
     if (user && !user.pharmacyId && user.role === 'pharmacy') {
         return (
             <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500 mb-4"></div>
                 <h2 className="text-xl font-semibold text-gray-800">Setting up your Pharmacy...</h2>
-                <p className="text-gray-500">Creating your dashboard workspace.</p>
             </div>
         );
     }
 
-    // Fallback error only if something really weird happens (e.g. role is wrong)
     if (!user || (!user.pharmacyId && user.role !== 'pharmacy')) {
         return (
             <div className="max-w-6xl mx-auto px-4 py-8 text-center">
@@ -170,17 +146,6 @@ const PharmacyDashboard = () => {
             </div>
         );
     }
-
-    // Prepare Data for Render
-    const currentInventory = drugs.map(drug => {
-        const stockItem = inventory.find(i => i.pharmacy_id === user.pharmacyId && i.drug_id === drug.id);
-        return {
-            ...drug,
-            stock: stockItem ? stockItem.stock : 0
-        };
-    });
-
-    const myReservations = getReservationsForPharmacy(user.pharmacyId);
 
     // --- MAIN RENDER ---
     return (
